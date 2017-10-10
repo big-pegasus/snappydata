@@ -17,14 +17,16 @@
 package org.apache.spark.sql.internal
 
 import scala.util.control.NonFatal
-
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.api.java._
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry._
+import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
 import org.apache.spark.sql.catalyst.expressions.{Expression, ScalaUDF}
 import org.apache.spark.sql.execution.aggregate.ScalaUDAF
 import org.apache.spark.sql.expressions.UserDefinedAggregateFunction
 import org.apache.spark.sql.types.DataType
+
+import scala.util.{Failure, Success, Try}
 
 
 object UDFFunction {
@@ -36,6 +38,12 @@ object UDFFunction {
         if (classOf[UserDefinedAggregateFunction].isAssignableFrom(clazz)) {
           val udaf = clazz.newInstance().asInstanceOf[UserDefinedAggregateFunction]
           ScalaUDAF(children, udaf)
+        } else if (classOf[DeclarativeAggregate].isAssignableFrom(clazz)) {
+          val ctor = clazz.getDeclaredConstructor(classOf[Seq[_]])
+          Try(ctor.newInstance(children).asInstanceOf[Expression]) match {
+            case Success(e) => e
+            case Failure(e) => throw new AnalysisException(e.getCause.getMessage)
+          }
         } else {
           children.size match {
             // scalastyle:off line.size.limit

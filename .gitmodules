@@ -8,6 +8,6 @@
 	branch = snappy/master
 [submodule "spark"]
         path = spark
-        url = https://github.com/SnappyDataInc/spark.git
+        url = https://github.com/big-pegasus/spark.git
         branch = snappy/branch-2.1 
 
