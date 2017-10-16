@@ -42,7 +42,11 @@ object UDFFunction {
           val ctor = clazz.getDeclaredConstructor(classOf[Seq[_]])
           Try(ctor.newInstance(children).asInstanceOf[Expression]) match {
             case Success(e) => e
-            case Failure(e) => throw new AnalysisException(e.getCause.getMessage)
+            case Failure(e) => {
+                 val analysisException = new AnalysisException(e.getCause.getMessage)
+                 analysisException.setStackTrace(e.getStackTrace)
+	    	 throw analysisException
+            }
           }
         } else {
           children.size match {
