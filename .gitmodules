@@ -4,7 +4,7 @@
 	branch = snappydata
 [submodule "snappy-store"]
 	path = store
-	url = https://github.com/SnappyDataInc/snappy-store.git
+	url = https://github.com/big-pegasus/snappy-store.git
 	branch = snappy/master
 [submodule "spark"]
         path = spark
