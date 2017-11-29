@@ -2091,17 +2091,20 @@ object SnappySession extends Logging {
     try {
       var cachedDF = planCache.getUnchecked(key)
       if (!key.valid) {
-        logDebug(s"Invalidating cached plan for sql: ${key.sqlText}")
+        logInfo(s"(${session.id}) Invalidating cached plan for sql: ${key.sqlText}")
         planCache.invalidate(key)
       }
       // if null has been returned, then evaluate
       if (cachedDF eq null) {
         val df = session.executeSQL(sqlText)
+        logInfo(s"(${session.id}) Evaluating plan for sql: $sqlText")
         cachedDF = evaluatePlan(df, session, sqlText)
         // default is enable caching
         if (!java.lang.Boolean.getBoolean("DISABLE_PLAN_CACHING")) {
           planCache.put(key, cachedDF)
         }
+      } else {
+        logInfo(s"(${session.id}) Hit query plan cache")
       }
       handleCachedDataFrame(cachedDF, key, lp, currentWrappedConstants, session, sqlText)
     } catch {
