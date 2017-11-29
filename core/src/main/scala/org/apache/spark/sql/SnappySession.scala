@@ -1970,7 +1970,8 @@ object SnappySession extends Logging {
     val cdf = new CachedDataFrame(df, sqlText, cachedRDD, shuffleDeps, rddId,
       localCollect, allLiterals, queryHints, executionTime, executionId)
 
-    logInfo(s"(${session.id}) evaluatePlan: evaluating plan for sql: $sqlText")
+    val sqlTextCompact = sqlText.replaceAll(" *\n+ *", " ").replaceAll(" +", " ")
+    logInfo(s"(${session.id}) evaluatePlan: evaluating plan for sql: $sqlTextCompact")
 
     // if this has in-memory caching then don't cache since plan can change
     // dynamically after caching due to unpersist etc
@@ -2106,7 +2107,7 @@ object SnappySession extends Logging {
           planCache.put(key, cachedDF)
         }
       } else {
-        logInfo(s"(${session.id}) Hit query plan cache")
+        logInfo(s"(${session.id}) Hit query plan cache, current cache size is ${planCache.size()}")
       }
       handleCachedDataFrame(cachedDF, key, lp, currentWrappedConstants, session, sqlText)
     } catch {
