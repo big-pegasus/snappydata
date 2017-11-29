@@ -1970,6 +1970,8 @@ object SnappySession extends Logging {
     val cdf = new CachedDataFrame(df, sqlText, cachedRDD, shuffleDeps, rddId,
       localCollect, allLiterals, queryHints, executionTime, executionId)
 
+    logInfo(s"(${session.id}) evaluatePlan: evaluating plan for sql: $sqlText")
+
     // if this has in-memory caching then don't cache since plan can change
     // dynamically after caching due to unpersist etc
     if (executedPlan.find(_.isInstanceOf[InMemoryTableScanExec]).isDefined) {
