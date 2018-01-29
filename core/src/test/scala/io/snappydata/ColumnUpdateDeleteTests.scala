@@ -29,12 +29,13 @@ import com.pivotal.gemfirexd.internal.engine.store.GemFireContainer
 import io.snappydata.test.dunit.{DistributedTestBase, SerializableRunnable}
 import org.scalatest.Assertions
 
+import org.apache.spark.Logging
 import org.apache.spark.sql.{Row, SnappySession}
 
 /**
  * Common tests for updates/deletes on column table.
  */
-object ColumnUpdateDeleteTests extends Assertions {
+object ColumnUpdateDeleteTests extends Assertions with Logging {
 
   def testBasicUpdate(session: SnappySession): Unit = {
     session.conf.set(Property.ColumnBatchSize.name, "10k")
@@ -48,11 +49,11 @@ object ColumnUpdateDeleteTests extends Assertions {
     session.sql("drop table if exists checkTable3")
 
     session.sql("create table updateTable (id int, addr string, status boolean) " +
-        "using column options(buckets '5')")
+        "using column options(buckets '4')")
     session.sql("create table checkTable1 (id int, addr string, status boolean) " +
-        "using column options(buckets '5')")
+        "using column options(buckets '4')")
     session.sql("create table checkTable2 (id int, addr string, status boolean) " +
-        "using column options(buckets '3')")
+        "using column options(buckets '2')")
     session.sql("create table checkTable3 (id int, addr string, status boolean) " +
         "using column options(buckets '1')")
 
@@ -207,13 +208,13 @@ object ColumnUpdateDeleteTests extends Assertions {
     session.sql("drop table if exists checkTable3")
 
     session.sql("create table updateTable (id int, addr string, status boolean) " +
-        "using column options(buckets '5', partition_by 'addr')")
+        "using column options(buckets '4', partition_by 'addr')")
     session.sql("create table checkTable1 (id int, addr string, status boolean) " +
-        "using column options(buckets '3')")
+        "using column options(buckets '2')")
     session.sql("create table checkTable2 (id int, addr string, status boolean) " +
-        "using column options(buckets '7')")
+        "using column options(buckets '8')")
     session.sql("create table checkTable3 (id int, addr string, status boolean) " +
-        "using column options(buckets '3')")
+        "using column options(buckets '2')")
 
     for (_ <- 1 to 3) {
       testBasicDeleteIter(session)
@@ -481,11 +482,12 @@ object ColumnUpdateDeleteTests extends Assertions {
         assert(res.map(_.getLong(0)).sum > 0)
       } catch {
         case t: Throwable =>
+          logError(t.getMessage, t)
           exceptions += Thread.currentThread() -> t
           throw t
       }
     }(executionContext))
-    tasks.foreach(Await.ready(_, Duration.Inf))
+    tasks.foreach(Await.ready(_, Duration(300, "s")))
 
     assert(exceptions.isEmpty, s"Failed with exceptions: $exceptions")
 
@@ -508,11 +510,12 @@ object ColumnUpdateDeleteTests extends Assertions {
         assert(res.map(_.getLong(0)).sum > 0)
       } catch {
         case t: Throwable =>
+          logError(t.getMessage, t)
           exceptions += Thread.currentThread() -> t
           throw t
       }
     }(executionContext))
-    tasks.foreach(Await.ready(_, Duration.Inf))
+    tasks.foreach(Await.ready(_, Duration(300, "s")))
 
     assert(exceptions.isEmpty, s"Failed with exceptions: $exceptions")
 
