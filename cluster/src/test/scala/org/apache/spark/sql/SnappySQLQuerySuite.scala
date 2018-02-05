@@ -18,10 +18,11 @@ package org.apache.spark.sql
 
 import io.snappydata.SnappyFunSuite
 
-import org.apache.spark.sql.catalyst.util.stackTraceToString
 import org.apache.spark.sql.test.SQLTestData.TestData2
 
 class SnappySQLQuerySuite extends SnappyFunSuite {
+
+  private lazy val session: SnappySession = snc.snappySession
 
   // Ported test from Spark
   test("SNAP-1885 : left semi greater than predicate and equal operator") {
@@ -45,30 +46,6 @@ class SnappySQLQuerySuite extends SnappyFunSuite {
           "ON x.b = y.a and x.a >= y.b + 1"),
       Seq(Row(2, 1), Row(2, 2), Row(3, 1), Row(3, 2))
     )
-  }
-
-  protected def checkAnswer(df: => DataFrame, expectedAnswer: Seq[Row]): Unit = {
-    val analyzedDF = try df catch {
-      case ae: AnalysisException =>
-        if (ae.plan.isDefined) {
-          fail(
-            s"""
-               |Failed to analyze query: $ae
-               |${ae.plan.get}
-               |
-               |${stackTraceToString(ae)}
-               |""".stripMargin)
-        } else {
-          throw ae
-        }
-    }
-
-    assertEmptyMissingInput(analyzedDF)
-
-    QueryTest.checkAnswer(analyzedDF, expectedAnswer) match {
-      case Some(errorMessage) => fail(errorMessage)
-      case None =>
-    }
   }
 
   test("SNAP-1884 Join with temporary table not returning rows") {
@@ -117,18 +94,74 @@ class SnappySQLQuerySuite extends SnappyFunSuite {
       Row(1, "a", 1) ::
         Row(2, "b", 2) :: Nil)
   }
-  /**
-    * Asserts that a given [[Dataset]] does not have missing inputs in all the analyzed plans.
-    */
-  def assertEmptyMissingInput(query: Dataset[_]): Unit = {
-    assert(query.queryExecution.analyzed.missingInput.isEmpty,
-      s"The analyzed logical plan has missing inputs:\n${query.queryExecution.analyzed}")
-    assert(query.queryExecution.optimizedPlan.missingInput.isEmpty,
-      s"The optimized logical plan has missing inputs:\n${query.queryExecution.optimizedPlan}")
-    assert(query.queryExecution.executedPlan.missingInput.isEmpty,
-      s"The physical plan has missing inputs:\n${query.queryExecution.executedPlan}")
+
+  import session.implicits._
+
+  test("SNAP-1840 -> uncorrelated scalar subquery") {
+
+    val df = Seq((1, "one"), (2, "two"), (3, "three")).toDF("key", "value")
+    df.write.format("row").saveAsTable("subqueryData")
+
+    checkAnswer(
+      session.sql("select -(select max(key) from subqueryData)"),
+      Array(Row(-3))
+    )
+
+    checkAnswer(
+      session.sql("select (select key from subqueryData where key > 2 order by key limit 1) + 1"),
+      Array(Row(4))
+    )
+
+    checkAnswer(
+      session.sql("select (select value from subqueryData limit 0)"),
+      Array(Row(null))
+    )
+
+    checkAnswer(
+      session.sql("select (select min(value) from subqueryData" +
+          " where key = (select max(key) from subqueryData) - 1)"),
+      Array(Row("two"))
+    )
+    session.dropTable("subqueryData", ifExists = true)
   }
 
+  test("NOT EXISTS predicate subquery") {
+    val row = identity[(java.lang.Integer, java.lang.Double)] _
+
+    lazy val l = Seq(
+      row(1, 2.0),
+      row(1, 2.0),
+      row(2, 1.0),
+      row(2, 1.0),
+      row(3, 3.0),
+      row(null, null),
+      row(null, 5.0),
+      row(6, null)).toDF("a", "b")
+
+    lazy val r = Seq(
+      row(2, 3.0),
+      row(2, 3.0),
+      row(3, 2.0),
+      row(4, 1.0),
+      row(null, null),
+      row(null, 5.0),
+      row(6, null)).toDF("c", "d")
+
+    l.write.format("row").saveAsTable("l")
+    r.write.format("row").saveAsTable("r")
+
+    checkAnswer(
+      session.sql("select * from l where not exists (select * from r where l.a = r.c)"),
+      Row(1, 2.0) :: Row(1, 2.0) :: Row(null, null) :: Row(null, 5.0) :: Nil)
+    checkAnswer(
+      session.sql("select * from l where not exists " +
+          "(select * from r where l.a = r.c and l.b < r.d)"),
+      Row(1, 2.0) :: Row(1, 2.0) :: Row(3, 3.0) ::
+          Row(null, null) :: Row(null, 5.0) :: Row(6, null) :: Nil)
+
+    session.dropTable("l", ifExists = true)
+    session.dropTable("r", ifExists = true)
+  }
 }
 
 case class LowerCaseData(n: Int, l: String)

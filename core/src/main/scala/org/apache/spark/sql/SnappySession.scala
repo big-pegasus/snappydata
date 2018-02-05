@@ -225,6 +225,9 @@ class SnappySession(_sc: SparkContext) extends SparkSession(_sc) {
   private[sql] var planCaching: Boolean = Property.PlanCaching.get(sessionState.conf)
 
   @transient
+  private[sql] var partitionPruning: Boolean = Property.PartitionPruning.get(sessionState.conf)
+
+  @transient
   private[sql] var wholeStageEnabled: Boolean = sessionState.conf.wholeStageEnabled
 
   /**
@@ -2195,7 +2198,7 @@ object SnappySession extends Logging {
     val key = CachedKey(session, lp, sqlText, currentWrappedConstants)
     try {
       var cachedDF = planCache.getUnchecked(key)
-      if (!key.valid) {
+      if (!key.valid || !session.planCaching) {
         logInfo(s"(${session.id}) Invalidating cached plan for sql: ${key.sqlText}")
         planCache.invalidate(key)
       }
@@ -2205,7 +2208,7 @@ object SnappySession extends Logging {
         logInfo(s"(${session.id}) Evaluating plan for sql: $sqlText")
         cachedDF = evaluatePlan(df, session, sqlText)
         // default is enable caching
-        if (!java.lang.Boolean.getBoolean("DISABLE_PLAN_CACHING")) {
+        if (session.planCaching) {
           planCache.put(key, cachedDF)
         }
       } else {
