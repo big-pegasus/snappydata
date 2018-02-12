@@ -373,7 +373,7 @@ class SnappySession(_sc: SparkContext) extends SparkSession(_sc) {
     if (key != null && key.valid) {
       allLiterals = CachedPlanHelperExec.allLiterals(
         getContextObject[ArrayBuffer[ArrayBuffer[Any]]](
-          SnappyParserConsts.REFERENCES_KEY).getOrElse(Seq.empty)
+          SnappyParserConsts.REFERENCES_KEY).getOrElse(Nil)
       ).filter(!_.collectedForPlanCaching)
 
       allLiterals.foreach(_.collectedForPlanCaching = true)
@@ -2279,14 +2279,15 @@ object SnappySession extends Logging {
 
   def clearAllCache(onlyQueryPlanCache: Boolean = false): Unit = {
     val sc = SnappyContext.globalSparkContext
-    if (!SnappyTableStatsProviderService.suspendCacheInvalidation && (sc ne null)) {
+    if (!SnappyTableStatsProviderService.suspendCacheInvalidation &&
+        (sc ne null) && !sc.isStopped) {
       planCache.invalidateAll()
       if (!onlyQueryPlanCache) {
         CodeGeneration.clearAllCache()
         Utils.mapExecutors(sc, (_, _) => {
           CodeGeneration.clearAllCache()
           Iterator.empty
-        })
+        }).count()
       }
     }
   }
