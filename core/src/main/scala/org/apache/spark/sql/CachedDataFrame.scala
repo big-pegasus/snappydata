@@ -22,7 +22,6 @@ import java.sql.SQLException
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, Future}
 import scala.reflect.ClassTag
@@ -33,6 +32,7 @@ import com.gemstone.gemfire.cache.LowMemoryException
 import com.gemstone.gemfire.internal.shared.ClientSharedUtils
 import com.gemstone.gemfire.internal.shared.unsafe.{DirectBufferAllocator, UnsafeHolder}
 import com.gemstone.gemfire.internal.{ByteArrayDataInput, ByteBufferDataOutput}
+import com.pivotal.gemfirexd.internal.engine.Misc
 import com.pivotal.gemfirexd.internal.shared.common.reference.SQLState
 import io.snappydata.Constant
 
@@ -114,6 +114,7 @@ class CachedDataFrame(snappySession: SnappySession, queryExecution: QueryExecuti
 
   private[sql] def startShuffleCleanups(sc: SparkContext): Unit = {
     val numShuffleDeps = shuffleDependencies.length
+    val cache = Misc.getGemFireCacheNoThrow
     if (numShuffleDeps > 0) {
       sc.cleaner match {
         case Some(cleaner) =>
@@ -121,6 +122,7 @@ class CachedDataFrame(snappySession: SnappySession, queryExecution: QueryExecuti
           while (i < numShuffleDeps) {
             val shuffleDependency = shuffleDependencies(i)
             // Cleaning the  shuffle artifacts asynchronously
+            implicit val executionContext = Utils.executionContext(cache)
             shuffleCleanups(i) = Future {
               cleaner.doCleanupShuffle(shuffleDependency, blocking = true)
             }
@@ -584,7 +586,7 @@ object CachedDataFrame
         data.arrayOffset() + data.position(), data.remaining())
   }
 
-  @transient private[sql] val nextExecutionIdMethod = {
+  @transient private[sql] lazy val nextExecutionIdMethod = {
     val m = SQLExecution.getClass.getDeclaredMethod("nextExecutionId")
     m.setAccessible(true)
     m

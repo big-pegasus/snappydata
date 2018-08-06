@@ -221,9 +221,10 @@ object StoreUtils {
   private def allocateBucketsToPartitions(session: SnappySession,
       region: PartitionedRegion, preferPrimaries: Boolean): Array[Partition] = {
 
+    type ServerBucket = (Option[BlockAndExecutorId], mutable.ArrayBuffer[Int])
     val numTotalBuckets = region.getTotalNumberOfBuckets
     val serverToBuckets = ObjectObjectHashMap.withExpectedSize[InternalDistributedMember,
-        (Option[BlockAndExecutorId], mutable.ArrayBuffer[Int])](4)
+        ServerBucket](4)
     val adviser = region.getRegionAdvisor
     for (p <- 0 until numTotalBuckets) {
       var prefNode = if (preferPrimaries) region.getOrCreateNodeForBucketWrite(p, null)
@@ -247,13 +248,11 @@ object StoreUtils {
               }
             })
       }
-      val buckets = serverToBuckets.get(prefNode) match {
-        case null =>
-          val buckets = new mutable.ArrayBuffer[Int]()
-          serverToBuckets.put(prefNode, prefBlockId -> buckets)
-          buckets
-        case b => b._2
-      }
+      val buckets = serverToBuckets.computeIfAbsent(prefNode,
+        new java.util.function.Function[InternalDistributedMember, ServerBucket] {
+          override def apply(n: InternalDistributedMember): ServerBucket =
+            prefBlockId -> new mutable.ArrayBuffer[Int]()
+        })._2
       buckets += p
     }
     // marker array to check that all buckets have been allocated
@@ -459,7 +458,8 @@ object StoreUtils {
       parameters.remove(DISKSTORE) match {
         case Some(v) =>
           if (!isPersistent && !overflow) {
-            throw Utils.analysisException(s"Option '$DISKSTORE' requires '$PERSISTENCE' option")
+            throw Utils.analysisException(
+              s"Option '$DISKSTORE' requires '$PERSISTENCE' or '$OVERFLOW' option")
           }
           if (v == GfxdConstants.GFXD_DEFAULT_DISKSTORE_NAME) {
             sb.append(s"'${GfxdConstants.SNAPPY_DEFAULT_DELTA_DISKSTORE}' ")
@@ -473,7 +473,7 @@ object StoreUtils {
       parameters.remove(DISKSTORE).foreach { v =>
         if (isPersistent) sb.append(s"'$v' ")
         else if (!isPersistent && !overflow) throw Utils.analysisException(
-          s"Option '$DISKSTORE' requires '$PERSISTENCE' option")
+          s"Option '$DISKSTORE' requires '$PERSISTENCE' or '$OVERFLOW' option")
       }
     }
     sb.append(parameters.remove(SERVER_GROUPS)

@@ -23,6 +23,7 @@ import java.util.TimeZone
 
 import scala.annotation.tailrec
 import scala.collection.{mutable, Map => SMap}
+import scala.concurrent.ExecutionContext
 import scala.language.existentials
 import scala.reflect.ClassTag
 import scala.util.Sorting
@@ -30,6 +31,8 @@ import scala.util.control.NonFatal
 
 import com.esotericsoftware.kryo.io.{Input, Output}
 import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
+import com.gemstone.gemfire.SystemFailure
+import com.gemstone.gemfire.internal.cache.{ExternalTableMetaData, GemFireCacheImpl}
 import com.gemstone.gemfire.internal.shared.BufferAllocator
 import com.gemstone.gemfire.internal.shared.unsafe.UnsafeHolder
 import com.pivotal.gemfirexd.internal.engine.jdbc.GemFireXDRuntimeException
@@ -45,7 +48,7 @@ import org.apache.spark.scheduler.TaskLocation
 import org.apache.spark.scheduler.local.LocalSchedulerBackend
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenContext
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, GenericRow, UnsafeRow}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression, GenericRow, UnsafeRow}
 import org.apache.spark.sql.catalyst.json.{JSONOptions, JacksonGenerator, JacksonUtils}
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan}
 import org.apache.spark.sql.catalyst.plans.physical.{Partitioning, PartitioningCollection}
@@ -53,7 +56,7 @@ import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, InternalRow, analysis}
 import org.apache.spark.sql.execution.datasources.jdbc.{DriverRegistry, DriverWrapper}
 import org.apache.spark.sql.execution.metric.SQLMetric
-import org.apache.spark.sql.hive.SnappyStoreHiveCatalog
+import org.apache.spark.sql.hive.{ExternalTableType, SnappyStoreHiveCatalog}
 import org.apache.spark.sql.sources.CastLongTime
 import org.apache.spark.sql.types._
 import org.apache.spark.storage.{BlockId, BlockManager, BlockManagerId}
@@ -63,7 +66,7 @@ import org.apache.spark.util.AccumulatorV2
 import org.apache.spark.util.collection.BitSet
 import org.apache.spark.util.io.ChunkedByteBuffer
 
-object Utils {
+object Utils extends Logging {
 
   final val WEIGHTAGE_COLUMN_NAME = "SNAPPY_SAMPLER_WEIGHTAGE"
   final val SKIP_ANALYSIS_PREFIX = "SAMPLE_"
@@ -85,6 +88,33 @@ object Utils {
   def analysisException(msg: String,
       cause: Option[Throwable] = None): AnalysisException =
     new AnalysisException(msg, None, None, None, cause)
+
+  def withExceptionHandling(f: => Unit, doFinally: () => Unit = null): Unit = {
+    try {
+      f
+    } catch {
+      case t: Throwable => logAndThrowException(t)
+    } finally {
+      if (doFinally ne null) doFinally()
+    }
+  }
+
+  def logAndThrowException(t: Throwable): Unit = t match {
+    case e: Error if SystemFailure.isJVMFailureError(e) =>
+      SystemFailure.initiateFailure(e)
+      // If this ever returns, rethrow the error. We're poisoned
+      // now, so don't let this thread continue.
+      throw e
+    case _ =>
+      // Whenever you catch Error or Throwable, you must also
+      // check for fatal JVM error (see above).  However, there is
+      // _still_ a possibility that you are dealing with a cascading
+      // error condition, so you also need to check to see if the JVM
+      // is still usable:
+      SystemFailure.checkFailure()
+      logWarning(t.getMessage, t)
+      throw t
+  }
 
   def columnIndex(col: String, cols: Array[String], module: String): Int = {
     val colT = toUpperCase(col.trim)
@@ -389,6 +419,15 @@ object Utils {
   final def isLoner(sc: SparkContext): Boolean =
     (sc ne null) && sc.schedulerBackend.isInstanceOf[LocalSchedulerBackend]
 
+  def executionContext(cache: GemFireCacheImpl): ExecutionContext = {
+    if (cache eq null) scala.concurrent.ExecutionContext.Implicits.global
+    else {
+      val dm = cache.getDistributionManager
+      if (dm.isLoner) scala.concurrent.ExecutionContext.Implicits.global
+      else ExecutionContext.fromExecutorService(dm.getWaitingThreadPool)
+    }
+  }
+
   def parseColumnsAsClob(s: String): (Boolean, Set[String]) = {
     if (s.trim.equals("*")) {
       (true, Set.empty[String])
@@ -512,6 +551,18 @@ object Utils {
       else f.name
       Iterator((name, f))
     }: _*)
+  }
+
+  def schemaAttributes(schema: StructType): Seq[AttributeReference] = schema.toAttributes
+
+  def getTableSchema(metadata: ExternalTableMetaData): StructType = {
+    // add weightage column for sample tables
+    val schema = metadata.schema.asInstanceOf[StructType]
+    if (metadata.tableType == ExternalTableType.Sample.name &&
+        schema(schema.length - 1).name != Utils.WEIGHTAGE_COLUMN_NAME) {
+      schema.add(Utils.WEIGHTAGE_COLUMN_NAME,
+        LongType, nullable = false)
+    } else schema
   }
 
   def getFields(o: Any): Map[String, Any] = {
@@ -647,7 +698,7 @@ object Utils {
 
   def toOpenHashMap[K, V](map: scala.collection.Map[K, V]): ObjectObjectHashMap[K, V] = {
     val m = ObjectObjectHashMap.withExpectedSize[K, V](map.size)
-    map.foreach(p => m.put(p._1, p._2))
+    map.foreach(p => m.justPut(p._1, p._2))
     m
   }
 

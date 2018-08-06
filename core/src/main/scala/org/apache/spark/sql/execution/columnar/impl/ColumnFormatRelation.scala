@@ -262,6 +262,11 @@ abstract class BaseColumnFormatRelation(
     partitioningColumns.map(Utils.toUpperCase) ++ ColumnDelta.mutableKeyNames
   }
 
+  protected def markMutablePlan(): Unit = {
+    sqlContext.sparkSession.asInstanceOf[SnappySession].setMutablePlanOwner(
+      resolvedName, persist = false)
+  }
+
   /**
    * Get a spark plan to update rows in the relation. The result of SparkPlan
    * execution should be a count of number of updated rows.
@@ -269,6 +274,7 @@ abstract class BaseColumnFormatRelation(
   override def getUpdatePlan(relation: LogicalRelation, child: SparkPlan,
       updateColumns: Seq[Attribute], updateExpressions: Seq[Expression],
       keyColumns: Seq[Attribute]): SparkPlan = {
+    markMutablePlan()
     ColumnUpdateExec(child, externalColumnTableName, partitionColumns,
       partitionExpressions(relation), numBuckets, isPartitioned, schema, externalStore, this,
       updateColumns, updateExpressions, keyColumns, connProperties, onExecutor = false)
@@ -280,6 +286,7 @@ abstract class BaseColumnFormatRelation(
    */
   override def getDeletePlan(relation: LogicalRelation, child: SparkPlan,
       keyColumns: Seq[Attribute]): SparkPlan = {
+    markMutablePlan()
     ColumnDeleteExec(child, externalColumnTableName, partitionColumns,
       partitionExpressions(relation), numBuckets, isPartitioned, schema, externalStore,
       this, keyColumns, connProperties, onExecutor = false)
@@ -387,7 +394,7 @@ abstract class BaseColumnFormatRelation(
       conn.commit()
       conn.close()
     }
-    createActualTables(table, externalStore)
+    createActualTables(resolvedName, externalStore)
   }
 
   /**
@@ -397,10 +404,10 @@ abstract class BaseColumnFormatRelation(
    * each for a column. The data column for the base entry will contain the stats.
    * id for the base entry would be the uuid while for column entries it would be uuid_colName.
    */
-  override def createExternalTableForColumnBatches(tableName: String,
+  override def createTableForColumnBatches(tableName: String,
       externalStore: ExternalStore): Unit = {
     require(tableName != null && tableName.length > 0,
-      "createExternalTableForColumnBatches: expected non-empty table name")
+      "createTableForColumnBatches: expected non-empty table name")
 
     val (primaryKey, partitionStrategy, concurrency) = dialect match {
       // The driver if not a loner should be an accessor only
@@ -453,8 +460,7 @@ abstract class BaseColumnFormatRelation(
           case d: JdbcExtendedDialect => d.initializeTable(tableName,
             sqlContext.conf.caseSensitiveAnalysis, conn)
         }
-        createExternalTableForColumnBatches(externalColumnTableName,
-          externalStore)
+        createTableForColumnBatches(externalColumnTableName, externalStore)
       }
     } catch {
       case sqle: java.sql.SQLException =>
@@ -683,6 +689,7 @@ class ColumnFormatRelation(
     * The result of SparkPlan execution should be a count of number of rows put.
     */
   override def getPutPlan(insertPlan: SparkPlan, updatePlan: SparkPlan): SparkPlan = {
+    markMutablePlan()
     ColumnPutIntoExec(insertPlan, updatePlan)
   }
 
@@ -777,7 +784,7 @@ object ColumnFormatRelation extends Logging with StoreCallback {
     assert(indexEntry.dml.nonEmpty)
     val rowInsertStr = indexEntry.dml
     (CodeGeneration.getGeneratedIndexStatement(indexEntry.entityName,
-      indexEntry.schema.asInstanceOf[StructType],
+      Utils.getTableSchema(indexEntry),
       indexEntry.externalStore.asInstanceOf[ExternalStore].connProperties.dialect),
         connectedExternalStore.conn.prepareStatement(rowInsertStr))
   }

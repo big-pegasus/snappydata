@@ -23,7 +23,7 @@ import io.snappydata.cluster.PreparedQueryRoutingSingleNodeSuite
 
 import org.apache.spark.SparkConf
 import org.apache.spark.memory.SnappyUnifiedMemoryManager
-import org.apache.spark.sql.{Row, SnappySession}
+import org.apache.spark.sql.SnappySession
 
 /**
  * Tests for updates/deletes on column table.
