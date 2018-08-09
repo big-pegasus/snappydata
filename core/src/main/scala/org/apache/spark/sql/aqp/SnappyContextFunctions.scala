@@ -17,7 +17,6 @@
 package org.apache.spark.sql.aqp
 
 
-import io.snappydata.SnappyDataFunctions.usageStr
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
