@@ -17,7 +17,6 @@
 package org.apache.spark.sql.aqp
 
 
-
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
@@ -45,7 +44,7 @@ class SnappyContextFunctions {
       "CURRENT_USER", usageStr, "")
     registry.registerFunction("CURRENT_USER", info,
       e => {
-        if (! e.isEmpty) {
+        if (e.nonEmpty) {
           throw new AnalysisException("Argument(s)  passed for zero arg function " +
               s"CURRENT_USER")
         }

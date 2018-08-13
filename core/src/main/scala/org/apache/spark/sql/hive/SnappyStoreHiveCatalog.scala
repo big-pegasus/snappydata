@@ -1105,7 +1105,7 @@ class SnappyStoreHiveCatalog(externalCatalog: SnappyExternalCatalog,
     * Create a metastore function in the database specified in `funcDefinition`.
     * If no such database is specified, create it in the current database.
     * If the specified database is not present in catalog, create that database.
-    * @todo Ideally create schema from gfxd should get routed to create the database in
+    * @ TODO Ideally create schema from gfxd should get routed to create the database in
     * the Hive catalog.
     */
   override def createFunction(funcDefinition: CatalogFunction, ignoreIfExists: Boolean): Unit = {
