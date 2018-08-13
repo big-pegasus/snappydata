@@ -41,11 +41,10 @@ import org.apache.hadoop.fs.Path
 import org.apache.hadoop.hive.metastore.TableType
 import org.apache.hadoop.hive.ql.metadata.{Hive, HiveException, Table}
 
-import org.apache.spark.sql.internal
 import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.FunctionRegistry.FunctionBuilder
-import org.apache.spark.sql.catalyst.analysis.{FunctionAlreadyExistsException, FunctionRegistry, NoSuchDatabaseException, NoSuchFunctionException, NoSuchPermanentFunctionException, NoSuchTableException, UnresolvedRelation}
+import org.apache.spark.sql.catalyst.analysis.{FunctionAlreadyExistsException, FunctionRegistry, NoSuchDatabaseException, NoSuchFunctionException, NoSuchPermanentFunctionException, NoSuchTableException}
 import org.apache.spark.sql.catalyst.catalog.SessionCatalog._
 import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, ExpressionInfo}
@@ -524,7 +523,7 @@ class SnappyStoreHiveCatalog(externalCatalog: SnappyExternalCatalog,
               filter
             } else {
               result.copy(condition = org.apache.spark.sql.catalyst.expressions.And(
-                result.condition, filter.condition))
+                filter.condition, result.condition))
             }
         }
         val storedLogicalRelation = this.lookupRelation(newQualifiedTableName(
@@ -1377,6 +1376,10 @@ object SnappyStoreHiveCatalog {
   def getSchemaStringFromHiveTable(table: Table): String =
     JdbcExtendedUtils.readSplitProperty(HIVE_SCHEMA_PROP,
       table.getParameters.asScala).orNull
+
+  def getViewTextFromHiveTable(table: Table): String =
+    JdbcExtendedUtils.readSplitProperty(Constant.SPLIT_VIEW_ORIGINAL_TEXT_PROPERTY,
+      table.getParameters.asScala).getOrElse(table.getViewOriginalText)
 
   def getDatabaseOption(client: HiveClient, db: String): Option[CatalogDatabase] = try {
     Some(client.getDatabase(db))
