@@ -20,8 +20,8 @@ import java.sql.Connection
 
 import scala.collection.mutable
 
-import io.snappydata.SnappyTableStatsProviderService
 
+import io.snappydata.SnappyTableStatsProviderService
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.InternalRow
@@ -261,6 +261,27 @@ case class JDBCMutableRelation(
       conn.close()
     }
   }
+
+    /** Get primary keys of the row table */
+    override def getPrimaryKeyColumns: Seq[String] = {
+        val conn = ConnectionPool.getPoolConnection(table, dialect,
+            connProperties.poolProps, connProperties.connProps,
+            connProperties.hikariCP)
+        try {
+            val metadata = conn.getMetaData
+            val (schemaName, tableName) = JdbcExtendedUtils.getTableWithSchema(
+                table, conn)
+            val primaryKeys = metadata.getPrimaryKeys(null, schemaName, tableName)
+            val primaryKey = new mutable.ArrayBuffer[String](2)
+            while (primaryKeys.next()) {
+                primaryKey += primaryKeys.getString(4)
+            }
+            primaryKey
+        }
+        finally {
+            conn.close()
+        }
+    }
 
   override def insert(data: DataFrame, overwrite: Boolean): Unit = {
     // use the Insert plan for best performance
