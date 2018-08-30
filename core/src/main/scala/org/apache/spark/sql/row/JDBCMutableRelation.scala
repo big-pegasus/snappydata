@@ -65,7 +65,7 @@ case class JDBCMutableRelation(
     with DestroyRelation
     with IndexableRelation
     with AlterableRelation
-    with RowLevelSecurityRelation
+    with NativeTableRowLevelSecurityRelation
     with Logging {
 
   override val needConversion: Boolean = false
@@ -191,7 +191,7 @@ case class JDBCMutableRelation(
       sqlContext.sparkContext,
       schema,
       requiredColumns,
-      filters.flatMap(translateToFilter),
+      filters.flatMap(translateToFilter(_)),
       parts, jdbcOptions).asInstanceOf[RDD[Any]]
     (rdd, Nil)
   }
