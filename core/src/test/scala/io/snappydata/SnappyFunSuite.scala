@@ -139,7 +139,9 @@ abstract class SnappyFunSuite
 
   protected def baseCleanup(clearStoreToBlockMap: Boolean = true): Unit = {
     try {
-      TestUtils.dropAllTables(this.snc)
+      val session = this.snc.snappySession
+      TestUtils.dropAllTables(session)
+      TestUtils.dropAllSchemas(session)
     } finally {
       dirCleanup()
     }
@@ -177,8 +179,9 @@ abstract class SnappyFunSuite
 
   def stopAll(): Unit = {
     val sc = SnappyContext.globalSparkContext
-    logInfo("Stopping spark context = " + sc)
+    logInfo("Check stop required for spark context = " + sc)
     if (sc != null && !sc.isStopped) {
+      logInfo("Stopping spark context = " + sc)
       sc.stop()
     }
     cachedContext = null

@@ -17,7 +17,8 @@
 package org.apache.spark.scheduler.cluster
 
 import com.pivotal.gemfirexd.internal.engine.Misc
-import org.apache.spark.{Logging, SparkContext}
+
+import org.apache.spark.SparkContext
 import org.apache.spark.rpc.{RpcEndpointAddress, RpcEnv}
 import org.apache.spark.scheduler.{SparkListener, SparkListenerApplicationEnd, SparkListenerBlockManagerAdded, SparkListenerBlockManagerRemoved, SparkListenerExecutorAdded, SparkListenerExecutorRemoved, TaskSchedulerImpl}
 import org.apache.spark.sql.collection.{ToolsCallbackInit, Utils}
@@ -112,8 +113,8 @@ class BlockManagerIdListener(sc: SparkContext)
   override def onApplicationEnd(msg: SparkListenerApplicationEnd): Unit =
     SnappyContext.clearBlockIds()
 
-  private def handleNewExecutorJoin(bid: BlockManagerId) = {
-    val uris = SnappySession.getJarURIs()
+  private def handleNewExecutorJoin(bid: BlockManagerId): Unit = {
+    val uris = SnappySession.getJarURIs
     Utils.mapExecutors[Unit](sc, () => {
       ToolsCallbackInit.toolsCallback.addURIsToExecutorClassLoader(uris)
       Iterator.empty
