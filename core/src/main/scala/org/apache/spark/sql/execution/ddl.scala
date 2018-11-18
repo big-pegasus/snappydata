@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 SnappyData, Inc. All rights reserved.
+ * Copyright (c) 2018 SnappyData, Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you
  * may not use this file except in compliance with the License. You
@@ -19,26 +19,27 @@ package org.apache.spark.sql.execution
 
 import scala.util.control.NonFatal
 
-import com.pivotal.gemfirexd.Attribute
 import com.pivotal.gemfirexd.internal.engine.Misc
 import com.pivotal.gemfirexd.internal.engine.store.GemFireStore
-import com.pivotal.gemfirexd.internal.iapi.reference.Property
+import com.pivotal.gemfirexd.internal.iapi.reference.{Property => GemXDProperty}
 import com.pivotal.gemfirexd.internal.impl.jdbc.Util
 import com.pivotal.gemfirexd.internal.shared.common.reference.SQLState
-import io.snappydata.Constant
+import io.snappydata.{Constant, Property}
 
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.expressions.{Alias, SortDirection}
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
+import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
+import org.apache.spark.sql.catalyst.expressions.{Alias, Attribute, AttributeReference, SortDirection}
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.{SQLBuilder, TableIdentifier}
 import org.apache.spark.sql.collection.Utils
 import org.apache.spark.sql.execution.columnar.InMemoryTableScanExec
-import org.apache.spark.sql.execution.command.{CreateViewCommand, PersistedView, RunnableCommand, ViewType}
+import org.apache.spark.sql.execution.command.{CreateViewCommand, DescribeTableCommand, PersistedView, RunnableCommand, ShowTablesCommand, ViewType}
 import org.apache.spark.sql.hive.{QualifiedTableName, SnappyStoreHiveCatalog}
 import org.apache.spark.sql.internal.BypassRowLevelSecurity
 import org.apache.spark.sql.sources.JdbcExtendedUtils
-import org.apache.spark.sql.types.{MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{BooleanType, MetadataBuilder, StringType, StructField, StructType}
 import org.apache.spark.streaming.{Duration, SnappyStreamingContext}
 
 
@@ -203,12 +204,12 @@ private[sql] case class CreatePolicyCommand(policyIdent: QualifiedTableName,
     if (!Misc.isSecurityEnabled && !GemFireStore.ALLOW_RLS_WITHOUT_SECURITY) {
       throw Util.generateCsSQLException(SQLState.SECURITY_EXCEPTION_ENCOUNTERED,
         null, new IllegalStateException("CREATE POLICY failed: Security (" +
-            Attribute.AUTH_PROVIDER + ") not enabled in the system"))
+            com.pivotal.gemfirexd.Attribute.AUTH_PROVIDER + ") not enabled in the system"))
     }
     if (!Misc.getMemStoreBooting.isRLSEnabled) {
       throw Util.generateCsSQLException(SQLState.SECURITY_EXCEPTION_ENCOUNTERED,
         null, new IllegalStateException("CREATE POLICY failed: Row level security (" +
-            Property.SNAPPY_ENABLE_RLS + ") not enabled in the system"))
+            GemXDProperty.SNAPPY_ENABLE_RLS + ") not enabled in the system"))
     }
     val snc = session.asInstanceOf[SnappySession]
     SparkSession.setActiveSession(snc)
@@ -396,5 +397,104 @@ case class SnappyCacheTableCommand(tableIdent: TableIdentifier,
         }
     }
     Nil
+  }
+}
+
+/**
+ * Changes the name of "database" column to "schemaName" over Spark's ShowTablesCommand.
+ * Also when hive compatibility is turned on, then this does not include the schema name
+ * or "isTemporary" to return hive compatible result.
+ */
+class ShowSnappyTablesCommand(session: SnappySession, schemaOpt: Option[String],
+    tablePattern: Option[String]) extends ShowTablesCommand(schemaOpt, tablePattern) {
+
+  private val hiveCompatible = Property.HiveCompatible.get(session.sessionState.conf)
+
+  override val output: Seq[Attribute] = {
+    if (hiveCompatible) AttributeReference("name", StringType, nullable = false)() :: Nil
+    else {
+      AttributeReference("schemaName", StringType, nullable = false)() ::
+          AttributeReference("tableName", StringType, nullable = false)() ::
+          AttributeReference("isTemporary", BooleanType, nullable = false)() :: Nil
+    }
+  }
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    if (!hiveCompatible) return super.run(sparkSession)
+
+    val catalog = sparkSession.sessionState.catalog
+    val schemaName = schemaOpt match {
+      case None => catalog.getCurrentDatabase
+      case Some(s) => s
+    }
+    val tables = tableIdentifierPattern match {
+      case None => catalog.listTables(schemaName)
+      case Some(p) => catalog.listTables(schemaName, p)
+    }
+    tables.map(tableIdent => Row(tableIdent.table))
+  }
+}
+
+case class ShowViewsCommand(session: SnappySession, schemaOpt: Option[String],
+    viewPattern: Option[String]) extends RunnableCommand {
+
+  private val hiveCompatible = Property.HiveCompatible.get(session.sessionState.conf)
+
+  // The result of SHOW VIEWS has four columns: schemaName, tableName, isTemporary and isGlobal.
+  override val output: Seq[Attribute] = {
+    if (hiveCompatible) AttributeReference("viewName", StringType, nullable = false)() :: Nil
+    else {
+      AttributeReference("schemaName", StringType, nullable = false)() ::
+          AttributeReference("viewName", StringType, nullable = false)() ::
+          AttributeReference("isTemporary", BooleanType, nullable = false)() ::
+          AttributeReference("isGlobal", BooleanType, nullable = false)() :: Nil
+    }
+  }
+
+  private def getViewType(table: TableIdentifier,
+      session: SnappySession): Option[(Boolean, Boolean)] = {
+    val catalog = session.sessionCatalog
+    if (catalog.isTemporaryTable(table)) Some(true -> !catalog.isLocalTemporaryView(table))
+    else if (catalog.getTableMetadata(table).tableType != CatalogTableType.VIEW) None
+    else Some(false -> false)
+  }
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val session = sparkSession.asInstanceOf[SnappySession]
+    val catalog = session.sessionCatalog
+    val schemaName = schemaOpt match {
+      case None => catalog.getCurrentDatabase
+      case Some(s) => s
+    }
+    val tables = viewPattern match {
+      case None => catalog.listTables(schemaName)
+      case Some(p) => catalog.listTables(schemaName, p)
+    }
+    tables.map(tableIdent => tableIdent -> getViewType(tableIdent, session)).collect {
+      case (viewIdent, Some((isTemp, isGlobalTemp))) =>
+        if (hiveCompatible) Row(viewIdent.table)
+        else Row(viewIdent.database.getOrElse(""), viewIdent.table, isTemp, isGlobalTemp)
+    }
+  }
+}
+
+/**
+ * This extends Spark's describe to add support for CHAR and VARCHAR types.
+ */
+class DescribeSnappyTableCommand(table: TableIdentifier,
+    partitionSpec: TablePartitionSpec, isExtended: Boolean, isFormatted: Boolean)
+    extends DescribeTableCommand(table, partitionSpec, isExtended, isFormatted) {
+
+  override def run(sparkSession: SparkSession): Seq[Row] = {
+    val catalog = sparkSession.asInstanceOf[SnappySession].sessionCatalog
+    catalog.synchronized {
+      // set the flag to return CharType/VarcharType if present
+      catalog.convertCharTypesInMetadata = true
+      try {
+        super.run(sparkSession)
+      } finally {
+        catalog.convertCharTypesInMetadata = false
+      }
+    }
   }
 }
