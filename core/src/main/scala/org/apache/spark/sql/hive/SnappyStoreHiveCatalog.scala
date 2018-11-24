@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 SnappyData, Inc. All rights reserved.
+ * Copyright (c) 2018 SnappyData, Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you
  * may not use this file except in compliance with the License. You
@@ -93,7 +93,15 @@ class SnappyStoreHiveCatalog(externalCatalog: SnappyExternalCatalog,
 
   private var _client = metadataHive
 
-  private[sql] def client = {
+  /**
+   * Can be used to temporarily switch the metadata returned by catalog
+   * to use CharType and VarcharTypes. Is to be used for only temporary
+   * change by a caller that wishes the consume the result because rest
+   * of Spark cannot deal with those types.
+   */
+  private[sql] var convertCharTypesInMetadata = false
+
+  private[sql] def client: HiveClient = {
     // check initialized meta-store (including initial consistency check)
     val memStore = Misc.getMemStoreBootingNoThrow
     if (memStore ne null) {
@@ -780,12 +788,26 @@ class SnappyStoreHiveCatalog(externalCatalog: SnappyExternalCatalog,
     }
   }
 
+  private def convertCharTypes(field: StructField): StructField = field.dataType match {
+    case StringType if field.metadata.contains(Constant.CHAR_TYPE_BASE_PROP) =>
+      val md = field.metadata
+      md.getString(Constant.CHAR_TYPE_BASE_PROP) match {
+        case "CHAR" =>
+          field.copy(dataType = CharType(md.getLong(Constant.CHAR_TYPE_SIZE_PROP).toInt))
+        case "VARCHAR" =>
+          field.copy(dataType = VarcharType(md.getLong(Constant.CHAR_TYPE_SIZE_PROP).toInt))
+        case _ => field
+      }
+    case _ => field
+  }
+
   override def getTableMetadataOption(name: TableIdentifier): Option[CatalogTable] = {
     if (SYS_SCHEMA == formatDatabaseName(name.database.getOrElse(currentSchema))) {
       val table = formatTableName(name.table)
       val conn = snappySession.defaultPooledConnection(SYS_SCHEMA)
       try {
-        val cols = JdbcExtendedUtils.getTableSchema(SYS_SCHEMA, table, conn, Some(snappySession))
+        var cols = JdbcExtendedUtils.getTableSchema(SYS_SCHEMA, table, conn, Some(snappySession))
+        if (convertCharTypesInMetadata) cols = cols.map(convertCharTypes)
         if (cols.nonEmpty) {
           Some(CatalogTable(
             identifier = TableIdentifier(table, Option(SYS_SCHEMA)),
@@ -808,9 +830,11 @@ class SnappyStoreHiveCatalog(externalCatalog: SnappyExternalCatalog,
       }
     } else super.getTableMetadataOption(name) match {
       case None => None
-      case s@Some(table) => ExternalStoreUtils.getTableSchema(table.properties) match {
-        case None => s
-        case Some(schema) => Some(table.copy(schema = schema))
+      case t@Some(table) => ExternalStoreUtils.getTableSchema(table.properties) match {
+        case None => t
+        case Some(s) =>
+          val schema = if (convertCharTypesInMetadata) StructType(s.map(convertCharTypes)) else s
+          Some(table.copy(schema = schema))
       }
     }
   }
@@ -828,8 +852,7 @@ class SnappyStoreHiveCatalog(externalCatalog: SnappyExternalCatalog,
 
   override def listTables(schema: String, pattern: String): Seq[TableIdentifier] = {
     val schemaName = formatDatabaseName(schema)
-    if (schemaName == currentSchema && !databaseExists(schemaName)) Nil
-    else if (schemaName == SYS_SCHEMA) {
+    if (schemaName == SYS_SCHEMA) {
       val conn = snappySession.defaultPooledConnection(schemaName)
       try {
         // hive compatible filter patterns are different from JDBC ones
@@ -851,8 +874,10 @@ class SnappyStoreHiveCatalog(externalCatalog: SnappyExternalCatalog,
       } finally {
         conn.close()
       }
+    } else {
+      super.listTables(schema, pattern).map(id => TableIdentifier(formatTableName(id.table),
+        id.database.map(formatDatabaseName)))
     }
-    else super.listTables(schema, pattern).map(newQualifiedTableName)
   }
 
   // TODO: SW: cleanup the tempTables handling to error for schema
@@ -1027,7 +1052,6 @@ class SnappyStoreHiveCatalog(externalCatalog: SnappyExternalCatalog,
           properties = tableProperties.toMap)
 
         withHiveExceptionHandling(client.createTable(hiveTable, ignoreIfExists = true))
-        SnappySession.clearAllCache()
       case Some(_) =>  // Do nothing
     }
     SnappyStoreHiveCatalog.setRelationDestroyVersionOnAllMembers(Some(tableIdent))
@@ -1080,7 +1104,6 @@ class SnappyStoreHiveCatalog(externalCatalog: SnappyExternalCatalog,
           properties = policyProperties.toMap)
 
         withHiveExceptionHandling(client.createTable(hiveTable, ignoreIfExists = true))
-        SnappySession.clearAllCache()
       case Some(catalogTable) =>
         // TODO: Ask Asif why two CREATE POLICY with same properties is allowed
         val policyProperties = new mutable.HashMap[String, String]
@@ -1664,11 +1687,21 @@ object SnappyStoreHiveCatalog {
     }
   }
 
+  def refreshSchemaOnAllMembers(table: CatalogTable): Unit = {
+    refreshSchemaOnAllMembers(table.database, table.identifier.table)
+  }
+
+  def refreshSchemaOnAllMembers(schema: String, table: String): Unit = {
+    val relation = new QualifiedTableName(schema, table)
+    setRelationDestroyVersionOnAllMembers(Some(relation))
+  }
+
   def setRelationDestroyVersionOnAllMembers(relation: Option[QualifiedTableName]): Unit = {
     SnappyContext.globalSparkContext match {
       case null =>
       case sc => RefreshMetadata.executeOnAll(sc, RefreshMetadata.SET_RELATION_DESTROY,
-        getRelationDestroyVersion -> relation, executeInConnector = false)
+        getRelationDestroyVersion -> relation, executeInConnector = false,
+        executeLocallyInConnector = true)
     }
   }
 

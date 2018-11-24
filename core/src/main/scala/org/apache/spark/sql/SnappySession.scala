@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 SnappyData, Inc. All rights reserved.
+ * Copyright (c) 2018 SnappyData, Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you
  * may not use this file except in compliance with the License. You
@@ -1306,11 +1306,20 @@ class SnappySession(_sc: SparkContext) extends SparkSession(_sc) {
               }
             }
           case None =>
+            val properties = if (isBuiltIn) params
+            else {
+              val storage = DataSource.buildStorageFormatFromOptions(params)
+              val tableLocation = storage.locationUri match {
+                case None => sessionState.catalog.defaultTablePath(tableIdent)
+                case Some(l) => l
+              }
+              storage.properties + ("path" -> tableLocation)
+            }
             val ds = DataSource(self,
               className = source,
               userSpecifiedSchema = userSpecifiedSchema,
               partitionColumns = partitionColumns,
-              options = params)
+              options = properties)
             ds.write(mode, df)
             ds.copy(userSpecifiedSchema = Some(df.schema.asNullable)).resolveRelation()
         }
@@ -2251,7 +2260,8 @@ object SnappySession extends Logging {
     // literals in push down filters etc
     planCaching &&= (cachedRDD ne null) && executedPlan.find {
       case _: BroadcastHashJoinExec | _: BroadcastNestedLoopJoinExec |
-           _: BroadcastExchangeExec | _: InMemoryTableScanExec | _: RangeExec => true
+           _: BroadcastExchangeExec | _: InMemoryTableScanExec |
+           _: RangeExec | _: LocalTableScanExec | _: RDDScanExec => true
       case p if HiveClientUtil.isHiveExecPlan(p) => true
       case dsc: DataSourceScanExec => !dsc.relation.isInstanceOf[DependentRelation]
       case _ => false
@@ -2405,7 +2415,7 @@ object SnappySession extends Logging {
 
   def clearAllCache(onlyQueryPlanCache: Boolean = false): Unit = {
     val sc = SnappyContext.globalSparkContext
-    if (!SnappyTableStatsProviderService.suspendCacheInvalidation &&
+    if (!SnappyTableStatsProviderService.TEST_SUSPEND_CACHE_INVALIDATION &&
         (sc ne null) && !sc.isStopped) {
       planCache.invalidateAll()
       if (!onlyQueryPlanCache) {

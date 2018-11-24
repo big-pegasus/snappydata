@@ -1,7 +1,7 @@
 /*
  * Changes for SnappyData data platform.
  *
- * Portions Copyright (c) 2017 SnappyData, Inc. All rights reserved.
+ * Portions Copyright (c) 2018 SnappyData, Inc. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you
  * may not use this file except in compliance with the License. You
@@ -87,7 +87,8 @@ object SnappyTableStatsProviderService {
     service
   }
 
-  var suspendCacheInvalidation = false
+  // only for testing
+  var TEST_SUSPEND_CACHE_INVALIDATION = false
 }
 
 object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService {
@@ -212,9 +213,10 @@ object SnappyEmbeddedTableStatsProviderService extends TableStatsProviderService
       try {
         // External Tables
         hiveTables.collect {
-          case table if table.tableType.equalsIgnoreCase("EXTERNAL") =>
-            new SnappyExternalTableStats(table.entityName, table.tableType, table.shortProvider,
-              table.externalStore, table.dataSourcePath, table.driverClass)
+          case table if table.tableType.equalsIgnoreCase("EXTERNAL") => {
+            new SnappyExternalTableStats(table.entityName, table.tableType, table.schema,
+              table.shortProvider, table.externalStore, table.dataSourcePath, table.driverClass)
+          }
         }
       } catch {
         case NonFatal(e) =>
