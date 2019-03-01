@@ -188,13 +188,11 @@ abstract class SnappyDataBaseDialect extends JdbcExtendedDialect {
   }
 
   override def getTableExistsQuery(table: String): String = {
-    // s"SELECT 1 FROM ${quotedName(table)} FETCH FIRST ROW ONLY"
-    s"SELECT 1 FROM ${quotedName(table)} LIMIT 1"
+    s"SELECT 1 FROM ${quotedName(table)} FETCH FIRST ROW ONLY"
   }
 
   override def getSchemaQuery(table: String): String = {
-    // s"SELECT * FROM ${quotedName(table)} FETCH FIRST ROW ONLY"
-    s"SELECT * FROM ${quotedName(table)} LIMIT 1"
+    s"SELECT * FROM ${quotedName(table)} FETCH FIRST ROW ONLY"
   }
 
   override def createSchema(schemaName: String, conn: Connection): Unit = {
